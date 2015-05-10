@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"launchpad.net/xmlpath"
+	"gopkg.in/xmlpath.v2"
 )
 
 var (
