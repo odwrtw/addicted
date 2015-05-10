@@ -1,8 +1,8 @@
 package addicted
 
 import (
+	"errors"
 	"io"
-	"log"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -26,39 +26,40 @@ var (
 
 // Subtitle represent a subtitle
 type Subtitle struct {
-	Language    string
-	Release     string
-	Download    int
-	Link        string
-	subtitleCon io.ReadCloser
+	Language string
+	Release  string
+	Download int
+	Link     string
+	conn     io.ReadCloser
 }
 
-func (sub *Subtitle) Read(p []byte) (n int, e error) {
-	if sub.subtitleCon == nil {
+func (sub *Subtitle) Read(p []byte) (int, error) {
+	if sub.conn == nil {
 		client := &http.Client{}
-		req, e := http.NewRequest("GET", baseURL+sub.Link[1:], nil)
-		req.Header.Add("Referer", baseURL)
-		resp, e := client.Do(req)
-		if e != nil {
-			return 0, e
+		req, err := http.NewRequest("GET", baseURL+sub.Link[1:], nil)
+		if err != nil {
+			return 0, err
 		}
-		sub.subtitleCon = resp.Body
+		req.Header.Add("Referer", baseURL)
+		resp, err := client.Do(req)
+		if err != nil {
+			return 0, err
+		}
+		sub.conn = resp.Body
 	}
-	n, e = sub.subtitleCon.Read(p)
-	return
+	return sub.conn.Read(p)
 }
 
 // Close close subtitle connection
 func (sub *Subtitle) Close() {
-	sub.subtitleCon.Close()
+	sub.conn.Close()
 }
 
 func getShows() (map[string]string, error) {
 	if len(tvShows) != 0 {
 		return tvShows, nil
 	}
-	tvShows, err := parseShows()
-	return tvShows, err
+	return parseShows()
 }
 
 func parseShows() (map[string]string, error) {
@@ -72,31 +73,30 @@ func parseShows() (map[string]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	var id string
-	var title string
+
 	shows := map[string]string{}
 	iter := xpathTvShowTitle.Iter(root)
 	for iter.Next() {
-		title = iter.Node().String()
-		id, _ = xpathTvShowIDFromTitle.String(iter.Node())
+		title := iter.Node().String()
+		id, _ := xpathTvShowIDFromTitle.String(iter.Node())
 		shows[title] = id
 	}
 	return shows, nil
 }
 
-func parseSubtitle(showID, s string, e string) ([]Subtitle, error) {
+func parseSubtitle(showID, s, e string) ([]Subtitle, error) {
 	resp, err := http.Get(baseURL + "re_episode.php?ep=" + showID + "-" + s + "x" + e)
 	if err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
 	defer resp.Body.Close()
 
 	root, err := xmlpath.ParseHTML(resp.Body)
 	if err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
 	if !xpathCheckSubtilePage.Exists(root) {
-		log.Fatal("Not found")
+		return nil, errors.New("Show not found")
 	}
 
 	sub := []Subtitle{}
@@ -132,7 +132,7 @@ func GetTvShows() (*map[string]string, error) {
 }
 
 // GetSubtitles return available subtitles
-func GetSubtitles(showID string, s int, e int) ([]Subtitle, error) {
+func GetSubtitles(showID string, s, e int) ([]Subtitle, error) {
 	season := strconv.Itoa(s)
 	episode := strconv.Itoa(e)
 	return parseSubtitle(showID, season, episode)
