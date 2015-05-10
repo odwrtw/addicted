@@ -2,6 +2,7 @@ package addicted
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"regexp"
@@ -33,9 +34,10 @@ type Subtitle struct {
 	conn     io.ReadCloser
 }
 
+// Read subtitle content
 func (sub *Subtitle) Read(p []byte) (int, error) {
 	if sub.conn == nil {
-		req, err := http.NewRequest("GET", baseURL+sub.Link[1:], nil)
+		req, err := http.NewRequest("GET", fmt.Sprintf("%v%v", baseURL, sub.Link[1:]), nil)
 		if err != nil {
 			return 0, err
 		}
@@ -84,7 +86,7 @@ func parseShows() (map[string]string, error) {
 }
 
 func parseSubtitle(showID, s, e string) ([]Subtitle, error) {
-	resp, err := http.Get(baseURL + "re_episode.php?ep=" + showID + "-" + s + "x" + e)
+	resp, err := http.Get(fmt.Sprintf("%vre_episode.php?ep=%v-%vx%v", baseURL, showID, s, e))
 	if err != nil {
 		return nil, err
 	}
@@ -121,7 +123,7 @@ func parseSubtitle(showID, s, e string) ([]Subtitle, error) {
 
 }
 
-// GetTvShows return
+// GetTvShows return a map of show's title as keysand ids as values
 func GetTvShows() (*map[string]string, error) {
 	shows, err := getShows()
 	if err != nil {
@@ -131,8 +133,8 @@ func GetTvShows() (*map[string]string, error) {
 }
 
 // GetSubtitles return available subtitles
-func GetSubtitles(showID string, s, e int) ([]Subtitle, error) {
-	season := strconv.Itoa(s)
-	episode := strconv.Itoa(e)
-	return parseSubtitle(showID, season, episode)
+func GetSubtitles(showID string, season, episode int) ([]Subtitle, error) {
+	s := strconv.Itoa(season)
+	e := strconv.Itoa(episode)
+	return parseSubtitle(showID, s, e)
 }
