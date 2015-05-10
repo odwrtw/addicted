@@ -35,13 +35,12 @@ type Subtitle struct {
 
 func (sub *Subtitle) Read(p []byte) (int, error) {
 	if sub.conn == nil {
-		client := &http.Client{}
 		req, err := http.NewRequest("GET", baseURL+sub.Link[1:], nil)
 		if err != nil {
 			return 0, err
 		}
 		req.Header.Add("Referer", baseURL)
-		resp, err := client.Do(req)
+		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			return 0, err
 		}
