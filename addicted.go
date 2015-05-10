@@ -1,6 +1,7 @@
 package addicted
 
 import (
+	"io"
 	"log"
 	"net/http"
 	"regexp"
@@ -25,10 +26,31 @@ var (
 
 // Subtitle represent a subtitle
 type Subtitle struct {
-	language string
-	release  string
-	download int
-	link     string
+	Language    string
+	Release     string
+	Download    int
+	Link        string
+	subtitleCon io.ReadCloser
+}
+
+func (sub *Subtitle) Read(p []byte) (n int, e error) {
+	if sub.subtitleCon == nil {
+		client := &http.Client{}
+		req, e := http.NewRequest("GET", baseURL+sub.Link[1:], nil)
+		req.Header.Add("Referer", baseURL)
+		resp, e := client.Do(req)
+		if e != nil {
+			return 0, e
+		}
+		sub.subtitleCon = resp.Body
+	}
+	n, e = sub.subtitleCon.Read(p)
+	return
+}
+
+// Close close subtitle connection
+func (sub *Subtitle) Close() {
+	sub.subtitleCon.Close()
 }
 
 func getShows() (map[string]string, error) {
@@ -88,10 +110,10 @@ func parseSubtitle(showID, s string, e string) ([]Subtitle, error) {
 			downloadText = reDownloadCount.FindAllStringSubmatch(downloadText, 1)[0][1]
 			downloadcount, _ := strconv.Atoi(downloadText)
 			subtitle := Subtitle{
-				language: strings.TrimSpace(iterlang.Node().String()),
-				download: downloadcount,
-				link:     download,
-				release:  release,
+				Language: strings.TrimSpace(iterlang.Node().String()),
+				Download: downloadcount,
+				Link:     download,
+				Release:  release,
 			}
 			sub = append(sub, subtitle)
 		}
