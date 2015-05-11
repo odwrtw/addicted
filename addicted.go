@@ -27,10 +27,10 @@ var (
 	xpathDownloadFromLanguage      = xmlpath.MustCompile("..//a[@class=\"buttonDownload\"]/@href")
 	xpathDownloadCountFromLanguage = xmlpath.MustCompile("../following-sibling::tr[1]/td[1]")
 	xpathCheckSubtilePage          = xmlpath.MustCompile("//div[@id=\"container\"]")
-	tvShows                        map[string]string
+	xpathCheckLogged               = xmlpath.MustCompile("//a[@href=\"/logout.php\"]")
 )
 
-// Subtitle represent a subtitle
+// Subtitle represents a subtitle
 type Subtitle struct {
 	Language string
 	Release  string
@@ -40,7 +40,7 @@ type Subtitle struct {
 	client   *Client
 }
 
-// Read subtitle content
+// Read subtitle's content
 func (sub *Subtitle) Read(p []byte) (int, error) {
 	if sub.conn == nil {
 		resp, err := sub.client.Get(fmt.Sprintf("%v%v", baseURL, sub.Link[1:]), true)
@@ -52,12 +52,12 @@ func (sub *Subtitle) Read(p []byte) (int, error) {
 	return sub.conn.Read(p)
 }
 
-// Close close subtitle connection
+// Close close subtitle's connection
 func (sub *Subtitle) Close() {
 	sub.conn.Close()
 }
 
-// Client object store information for interact with addic7ed as logged user
+// Client store information for interaction with addic7ed as logged user
 type Client struct {
 	user        string
 	passwd      string
@@ -66,7 +66,7 @@ type Client struct {
 	isConnected bool
 }
 
-// New return new addicted client
+// New returns new addicted's client
 func New(user, passwd string) (*Client, error) {
 	options := cookiejar.Options{
 		PublicSuffixList: publicsuffix.List,
@@ -79,10 +79,10 @@ func New(user, passwd string) (*Client, error) {
 	return &Client{user, passwd, nil, &httpClient, false}, nil
 }
 
-// Get wrapper function for http.Get which take care of cookie's session
+// Get wrapper function for http.Get which takes care of session's cookies
 func (c *Client) Get(url string, auth bool) (resp *http.Response, err error) {
 	if auth && !c.isConnected {
-		_, err := c.connect()
+		err := c.connect()
 		if err != nil {
 			return nil, err
 		}
@@ -96,21 +96,29 @@ func (c *Client) Get(url string, auth bool) (resp *http.Response, err error) {
 	return c.httpClient.Do(req)
 }
 
-func (c *Client) connect() (resp *http.Response, err error) {
+func (c *Client) connect() error {
 	values := url.Values{}
 	values.Add("username", c.user)
 	values.Add("password", c.passwd)
 	values.Add("url", "")
 	values.Add("Submit", "Log in")
-	req, err := http.NewRequest("POST", baseURL+"dologin.php", bytes.NewBufferString(values.Encode()))
-	if err != nil {
-		return nil, err
-	}
+	req, _ := http.NewRequest("POST", baseURL+"dologin.php", bytes.NewBufferString(values.Encode()))
 	req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
-	return c.httpClient.Do(req)
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	root, err := xmlpath.ParseHTML(resp.Body)
+	if err != nil {
+		return err
+	}
+	if !xpathCheckLogged.Exists(root) {
+		return errors.New("Invalid creditials")
+	}
+	return nil
 }
 
-// GetTvShows return a map of show's title as keysand ids as values
+// GetTvShows returns a map of show's title as keys and ids as values
 func (c *Client) GetTvShows() (*map[string]string, error) {
 	var err error
 	if len(c.shows) == 0 {
@@ -122,7 +130,7 @@ func (c *Client) GetTvShows() (*map[string]string, error) {
 	return &c.shows, nil
 }
 
-// GetSubtitles return available subtitles
+// GetSubtitles returns available subtitles
 func (c *Client) GetSubtitles(showID string, season, episode int) ([]Subtitle, error) {
 	s := strconv.Itoa(season)
 	e := strconv.Itoa(episode)
