@@ -1,7 +1,6 @@
 package addicted
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -28,6 +27,14 @@ var (
 	xpathDownloadCountFromLanguage = xmlpath.MustCompile("../following-sibling::tr[1]/td[1]")
 	xpathCheckSubtilePage          = xmlpath.MustCompile("//div[@id=\"container\"]")
 	xpathCheckLogged               = xmlpath.MustCompile("//a[@href=\"/logout.php\"]")
+	//ErrNoCreditial returned when attempt to login without creditial set
+	ErrNoCreditial = errors.New("No creditial provided")
+	//ErrInvalidCredential returned when login failed
+	ErrInvalidCredential = errors.New("Invalid creditial")
+	//ErrEpisodeNotFound returned when try to find subtitles for an unknow episode or season or show
+	ErrEpisodeNotFound = errors.New("Episode not found")
+	//ErrUnexpectedContent returned when addic7ed's website seem to have change
+	ErrUnexpectedContent = errors.New("Unexpected content")
 )
 
 // Subtitle represents a subtitle
@@ -43,7 +50,7 @@ type Subtitle struct {
 // Read subtitle's content
 func (sub *Subtitle) Read(p []byte) (int, error) {
 	if sub.conn == nil {
-		resp, err := sub.client.Get(fmt.Sprintf("%v%v", baseURL, sub.Link[1:]), true)
+		resp, err := sub.client.Get(fmt.Sprintf("%s%s", baseURL, sub.Link[1:]), true)
 		if err != nil {
 			return 0, err
 		}
@@ -66,24 +73,39 @@ type Client struct {
 	isConnected bool
 }
 
-// New returns new addicted's client
-func New(user, passwd string) (*Client, error) {
+// NewWithAuth returns new addicted's client with autentification
+func NewWithAuth(user, passwd string) (*Client, error) {
 	options := cookiejar.Options{
 		PublicSuffixList: publicsuffix.List,
 	}
-	jar, err := cookiejar.New(&options)
-	if err != nil {
-		return nil, err
-	}
+	jar, _ := cookiejar.New(&options)
 	httpClient := http.Client{Jar: jar}
 	return &Client{user, passwd, nil, &httpClient, false}, nil
+}
+
+// New returns new addicted's client
+func New() (*Client, error) {
+	options := cookiejar.Options{
+		PublicSuffixList: publicsuffix.List,
+	}
+	jar, _ := cookiejar.New(&options)
+	httpClient := http.Client{Jar: jar}
+	return &Client{"", "", nil, &httpClient, false}, nil
+}
+
+// SetCredential set user password for addicted client
+func (c *Client) SetCredential(user, password string) {
+	c.user = user
+	c.passwd = password
 }
 
 // Get wrapper function for http.Get which takes care of session's cookies
 func (c *Client) Get(url string, auth bool) (resp *http.Response, err error) {
 	if auth && !c.isConnected {
-		err := c.connect()
-		if err != nil {
+		if c.user != "" && c.passwd != "" {
+			return nil, ErrNoCreditial
+		}
+		if err := c.connect(); err != nil {
 			return nil, err
 		}
 		c.isConnected = true
@@ -102,24 +124,22 @@ func (c *Client) connect() error {
 	values.Add("password", c.passwd)
 	values.Add("url", "")
 	values.Add("Submit", "Log in")
-	req, _ := http.NewRequest("POST", baseURL+"dologin.php", bytes.NewBufferString(values.Encode()))
-	req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.httpClient.PostForm(baseURL+"dologin.php", values)
 	if err != nil {
 		return err
 	}
 	root, err := xmlpath.ParseHTML(resp.Body)
 	if err != nil {
-		return err
+		return ErrUnexpectedContent
 	}
 	if !xpathCheckLogged.Exists(root) {
-		return errors.New("Invalid creditials")
+		return ErrInvalidCredential
 	}
 	return nil
 }
 
 // GetTvShows returns a map of show's title as keys and ids as values
-func (c *Client) GetTvShows() (*map[string]string, error) {
+func (c *Client) GetTvShows() (map[string]string, error) {
 	var err error
 	if len(c.shows) == 0 {
 		c.shows, err = c.parseShows()
@@ -127,7 +147,7 @@ func (c *Client) GetTvShows() (*map[string]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &c.shows, nil
+	return c.shows, nil
 }
 
 // GetSubtitles returns available subtitles
@@ -146,21 +166,24 @@ func (c *Client) parseShows() (map[string]string, error) {
 
 	root, err := xmlpath.ParseHTML(resp.Body)
 	if err != nil {
-		return nil, err
+		return nil, ErrUnexpectedContent
 	}
 
 	shows := map[string]string{}
 	iter := xpathTvShowTitle.Iter(root)
 	for iter.Next() {
 		title := iter.Node().String()
-		id, _ := xpathTvShowIDFromTitle.String(iter.Node())
+		id, ok := xpathTvShowIDFromTitle.String(iter.Node())
+		if !ok {
+			return nil, ErrUnexpectedContent
+		}
 		shows[title] = id
 	}
 	return shows, nil
 }
 
 func (c *Client) parseSubtitle(showID, s, e string) ([]Subtitle, error) {
-	resp, err := http.Get(fmt.Sprintf("%vre_episode.php?ep=%v-%vx%v", baseURL, showID, s, e))
+	resp, err := http.Get(fmt.Sprintf("%vre_episode.php?ep=%s-%sx%s", baseURL, showID, s, e))
 	if err != nil {
 		return nil, err
 	}
@@ -168,10 +191,10 @@ func (c *Client) parseSubtitle(showID, s, e string) ([]Subtitle, error) {
 
 	root, err := xmlpath.ParseHTML(resp.Body)
 	if err != nil {
-		return nil, err
+		return nil, ErrUnexpectedContent
 	}
 	if !xpathCheckSubtilePage.Exists(root) {
-		return nil, errors.New("Show not found")
+		return nil, ErrEpisodeNotFound
 	}
 
 	sub := []Subtitle{}
@@ -180,10 +203,22 @@ func (c *Client) parseSubtitle(showID, s, e string) ([]Subtitle, error) {
 		release := iter.Node().String()
 		iterlang := xpathLanguageFromRelease.Iter(iter.Node())
 		for iterlang.Next() {
-			download, _ := xpathDownloadFromLanguage.String(iterlang.Node())
-			downloadText, _ := xpathDownloadCountFromLanguage.String(iterlang.Node())
-			downloadText = reDownloadCount.FindAllStringSubmatch(downloadText, 1)[0][1]
-			downloadcount, _ := strconv.Atoi(downloadText)
+			download, ok := xpathDownloadFromLanguage.String(iterlang.Node())
+			if !ok {
+				return nil, ErrUnexpectedContent
+			}
+			downloadText, ok := xpathDownloadCountFromLanguage.String(iterlang.Node())
+			if !ok {
+				return nil, ErrUnexpectedContent
+			}
+			refound := reDownloadCount.FindAllStringSubmatch(downloadText, 1)
+			if len(refound) == 0 || len(refound[0]) == 0 {
+				return nil, ErrUnexpectedContent
+			}
+			downloadcount, err := strconv.Atoi(refound[0][1])
+			if err != nil {
+				return nil, ErrUnexpectedContent
+			}
 			subtitle := Subtitle{
 				Language: strings.TrimSpace(iterlang.Node().String()),
 				Download: downloadcount,
