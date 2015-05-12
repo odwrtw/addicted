@@ -5,9 +5,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/cookiejar"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
+
+	"golang.org/x/net/publicsuffix"
 
 	"gopkg.in/xmlpath.v2"
 )
@@ -22,27 +26,31 @@ var (
 	xpathDownloadFromLanguage      = xmlpath.MustCompile("..//a[@class=\"buttonDownload\"]/@href")
 	xpathDownloadCountFromLanguage = xmlpath.MustCompile("../following-sibling::tr[1]/td[1]")
 	xpathCheckSubtilePage          = xmlpath.MustCompile("//div[@id=\"container\"]")
-	tvShows                        map[string]string
+	xpathCheckLogged               = xmlpath.MustCompile("//a[@href=\"/logout.php\"]")
+	//ErrNoCreditial returned when attempt to login without creditial set
+	ErrNoCreditial = errors.New("No creditial provided")
+	//ErrInvalidCredential returned when login failed
+	ErrInvalidCredential = errors.New("Invalid creditial")
+	//ErrEpisodeNotFound returned when try to find subtitles for an unknow episode or season or show
+	ErrEpisodeNotFound = errors.New("Episode not found")
+	//ErrUnexpectedContent returned when addic7ed's website seem to have change
+	ErrUnexpectedContent = errors.New("Unexpected content")
 )
 
-// Subtitle represent a subtitle
+// Subtitle represents a subtitle
 type Subtitle struct {
 	Language string
 	Release  string
 	Download int
 	Link     string
 	conn     io.ReadCloser
+	client   *Client
 }
 
-// Read subtitle content
+// Read subtitle's content
 func (sub *Subtitle) Read(p []byte) (int, error) {
 	if sub.conn == nil {
-		req, err := http.NewRequest("GET", fmt.Sprintf("%v%v", baseURL, sub.Link[1:]), nil)
-		if err != nil {
-			return 0, err
-		}
-		req.Header.Add("Referer", baseURL)
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := sub.client.Get(fmt.Sprintf("%s%s", baseURL, sub.Link[1:]), true)
 		if err != nil {
 			return 0, err
 		}
@@ -51,19 +59,105 @@ func (sub *Subtitle) Read(p []byte) (int, error) {
 	return sub.conn.Read(p)
 }
 
-// Close close subtitle connection
+// Close close subtitle's connection
 func (sub *Subtitle) Close() {
 	sub.conn.Close()
 }
 
-func getShows() (map[string]string, error) {
-	if len(tvShows) != 0 {
-		return tvShows, nil
-	}
-	return parseShows()
+// Client store information for interaction with addic7ed as logged user
+type Client struct {
+	user        string
+	passwd      string
+	shows       map[string]string
+	httpClient  *http.Client
+	isConnected bool
 }
 
-func parseShows() (map[string]string, error) {
+// NewWithAuth returns new addicted's client with autentification
+func NewWithAuth(user, passwd string) (*Client, error) {
+	options := cookiejar.Options{
+		PublicSuffixList: publicsuffix.List,
+	}
+	jar, _ := cookiejar.New(&options)
+	httpClient := http.Client{Jar: jar}
+	return &Client{user, passwd, nil, &httpClient, false}, nil
+}
+
+// New returns new addicted's client
+func New() (*Client, error) {
+	options := cookiejar.Options{
+		PublicSuffixList: publicsuffix.List,
+	}
+	jar, _ := cookiejar.New(&options)
+	httpClient := http.Client{Jar: jar}
+	return &Client{httpClient: &httpClient}, nil
+}
+
+// SetCredential set user password for addicted client
+func (c *Client) SetCredential(user, password string) {
+	c.user = user
+	c.passwd = password
+}
+
+// Get wrapper function for http.Get which takes care of session's cookies
+func (c *Client) Get(url string, auth bool) (resp *http.Response, err error) {
+	if auth && !c.isConnected {
+		if c.user != "" && c.passwd != "" {
+			return nil, ErrNoCreditial
+		}
+		if err := c.connect(); err != nil {
+			return nil, err
+		}
+		c.isConnected = true
+	}
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Add("Referer", baseURL)
+	return c.httpClient.Do(req)
+}
+
+func (c *Client) connect() error {
+	values := url.Values{}
+	values.Add("username", c.user)
+	values.Add("password", c.passwd)
+	values.Add("url", "")
+	values.Add("Submit", "Log in")
+	resp, err := c.httpClient.PostForm(baseURL+"dologin.php", values)
+	if err != nil {
+		return err
+	}
+	root, err := xmlpath.ParseHTML(resp.Body)
+	if err != nil {
+		return ErrUnexpectedContent
+	}
+	if !xpathCheckLogged.Exists(root) {
+		return ErrInvalidCredential
+	}
+	return nil
+}
+
+// GetTvShows returns a map of show's title as keys and ids as values
+func (c *Client) GetTvShows() (map[string]string, error) {
+	if len(c.shows) == 0 {
+		var err error
+		c.shows, err = c.parseShows()
+		if err != nil {
+			return nil, err
+		}
+	}
+	return c.shows, nil
+}
+
+// GetSubtitles returns available subtitles
+func (c *Client) GetSubtitles(showID string, season, episode int) ([]Subtitle, error) {
+	s := strconv.Itoa(season)
+	e := strconv.Itoa(episode)
+	return c.parseSubtitle(showID, s, e)
+}
+
+func (c *Client) parseShows() (map[string]string, error) {
 	resp, err := http.Get(baseURL)
 	if err != nil {
 		return nil, err
@@ -72,21 +166,24 @@ func parseShows() (map[string]string, error) {
 
 	root, err := xmlpath.ParseHTML(resp.Body)
 	if err != nil {
-		return nil, err
+		return nil, ErrUnexpectedContent
 	}
 
 	shows := map[string]string{}
 	iter := xpathTvShowTitle.Iter(root)
 	for iter.Next() {
 		title := iter.Node().String()
-		id, _ := xpathTvShowIDFromTitle.String(iter.Node())
+		id, ok := xpathTvShowIDFromTitle.String(iter.Node())
+		if !ok {
+			return nil, ErrUnexpectedContent
+		}
 		shows[title] = id
 	}
 	return shows, nil
 }
 
-func parseSubtitle(showID, s, e string) ([]Subtitle, error) {
-	resp, err := http.Get(fmt.Sprintf("%vre_episode.php?ep=%v-%vx%v", baseURL, showID, s, e))
+func (c *Client) parseSubtitle(showID, s, e string) ([]Subtitle, error) {
+	resp, err := http.Get(fmt.Sprintf("%vre_episode.php?ep=%s-%sx%s", baseURL, showID, s, e))
 	if err != nil {
 		return nil, err
 	}
@@ -94,10 +191,10 @@ func parseSubtitle(showID, s, e string) ([]Subtitle, error) {
 
 	root, err := xmlpath.ParseHTML(resp.Body)
 	if err != nil {
-		return nil, err
+		return nil, ErrUnexpectedContent
 	}
 	if !xpathCheckSubtilePage.Exists(root) {
-		return nil, errors.New("Show not found")
+		return nil, ErrEpisodeNotFound
 	}
 
 	sub := []Subtitle{}
@@ -106,35 +203,32 @@ func parseSubtitle(showID, s, e string) ([]Subtitle, error) {
 		release := iter.Node().String()
 		iterlang := xpathLanguageFromRelease.Iter(iter.Node())
 		for iterlang.Next() {
-			download, _ := xpathDownloadFromLanguage.String(iterlang.Node())
-			downloadText, _ := xpathDownloadCountFromLanguage.String(iterlang.Node())
-			downloadText = reDownloadCount.FindAllStringSubmatch(downloadText, 1)[0][1]
-			downloadcount, _ := strconv.Atoi(downloadText)
+			download, ok := xpathDownloadFromLanguage.String(iterlang.Node())
+			if !ok {
+				return nil, ErrUnexpectedContent
+			}
+			downloadText, ok := xpathDownloadCountFromLanguage.String(iterlang.Node())
+			if !ok {
+				return nil, ErrUnexpectedContent
+			}
+			refound := reDownloadCount.FindAllStringSubmatch(downloadText, 1)
+			if len(refound) == 0 || len(refound[0]) == 0 {
+				return nil, ErrUnexpectedContent
+			}
+			downloadcount, err := strconv.Atoi(refound[0][1])
+			if err != nil {
+				return nil, ErrUnexpectedContent
+			}
 			subtitle := Subtitle{
 				Language: strings.TrimSpace(iterlang.Node().String()),
 				Download: downloadcount,
 				Link:     download,
 				Release:  release,
+				client:   c,
 			}
 			sub = append(sub, subtitle)
 		}
 	}
 	return sub, nil
 
-}
-
-// GetTvShows return a map of show's title as keysand ids as values
-func GetTvShows() (*map[string]string, error) {
-	shows, err := getShows()
-	if err != nil {
-		return nil, err
-	}
-	return &shows, nil
-}
-
-// GetSubtitles return available subtitles
-func GetSubtitles(showID string, season, episode int) ([]Subtitle, error) {
-	s := strconv.Itoa(season)
-	e := strconv.Itoa(episode)
-	return parseSubtitle(showID, s, e)
 }
