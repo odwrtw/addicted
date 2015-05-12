@@ -78,7 +78,10 @@ func NewWithAuth(user, passwd string) (*Client, error) {
 	options := cookiejar.Options{
 		PublicSuffixList: publicsuffix.List,
 	}
-	jar, _ := cookiejar.New(&options)
+	jar, err := cookiejar.New(&options)
+	if err != nil {
+		return nil, err
+	}
 	httpClient := http.Client{Jar: jar}
 	return &Client{user, passwd, nil, &httpClient, false}, nil
 }
@@ -88,7 +91,10 @@ func New() (*Client, error) {
 	options := cookiejar.Options{
 		PublicSuffixList: publicsuffix.List,
 	}
-	jar, _ := cookiejar.New(&options)
+	jar, err := cookiejar.New(&options)
+	if err != nil {
+		return nil, err
+	}
 	httpClient := http.Client{Jar: jar}
 	return &Client{httpClient: &httpClient}, nil
 }
