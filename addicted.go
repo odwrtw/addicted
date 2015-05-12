@@ -90,7 +90,7 @@ func New() (*Client, error) {
 	}
 	jar, _ := cookiejar.New(&options)
 	httpClient := http.Client{Jar: jar}
-	return &Client{"", "", nil, &httpClient, false}, nil
+	return &Client{httpClient: &httpClient}, nil
 }
 
 // SetCredential set user password for addicted client
@@ -140,12 +140,12 @@ func (c *Client) connect() error {
 
 // GetTvShows returns a map of show's title as keys and ids as values
 func (c *Client) GetTvShows() (map[string]string, error) {
-	var err error
 	if len(c.shows) == 0 {
+		var err error
 		c.shows, err = c.parseShows()
-	}
-	if err != nil {
-		return nil, err
+		if err != nil {
+			return nil, err
+		}
 	}
 	return c.shows, nil
 }
