@@ -50,7 +50,7 @@ type Subtitle struct {
 // Read subtitle's content
 func (sub *Subtitle) Read(p []byte) (int, error) {
 	if sub.conn == nil {
-		resp, err := sub.client.Get(fmt.Sprintf("%s%s", baseURL, sub.Link[1:]), true)
+		resp, err := sub.client.Get(fmt.Sprintf("%s%s", baseURL, sub.Link[1:]), false)
 		if err != nil {
 			return 0, err
 		}
@@ -142,6 +142,7 @@ func (c *Client) Get(url string, auth bool) (resp *http.Response, err error) {
 		return nil, err
 	}
 	req.Header.Add("Referer", baseURL)
+	req.Header.Add("User-Agent", "Mozilla/5.0 (Windows; U; Windows NT 6.1; fr; rv:1.9.0.6) Gecko/2009011913 Firefox/3.0.6")
 	return c.httpClient.Do(req)
 }
 
@@ -247,7 +248,7 @@ func (c *Client) parseSubtitle(showID, s, e string) (Subtitles, error) {
 				return nil, ErrUnexpectedContent
 			}
 			subtitle := Subtitle{
-				Language: strings.TrimSpace(iterlang.Node().String()),
+				Language: strings.ToLower(strings.TrimSpace(iterlang.Node().String())),
 				Download: downloadcount,
 				Link:     download,
 				Release:  release,
