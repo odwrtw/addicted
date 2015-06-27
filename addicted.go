@@ -64,6 +64,27 @@ func (sub *Subtitle) Close() {
 	sub.conn.Close()
 }
 
+// ByDownloads helper for sorting
+type ByDownloads []Subtitle
+
+func (a ByDownloads) Len() int           { return len(a) }
+func (a ByDownloads) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
+func (a ByDownloads) Less(i, j int) bool { return a[i].Download < a[j].Download }
+
+// Subtitles helper for filter subtitle
+type Subtitles []Subtitle
+
+// FilterByLang filter by language
+func (a Subtitles) FilterByLang(lang string) Subtitles {
+	subs := []Subtitle{}
+	for _, sub := range a {
+		if sub.Language == lang {
+			subs = append(subs, sub)
+		}
+	}
+	return Subtitles(subs)
+}
+
 // Client store information for interaction with addic7ed as logged user
 type Client struct {
 	user        string
@@ -157,7 +178,7 @@ func (c *Client) GetTvShows() (map[string]string, error) {
 }
 
 // GetSubtitles returns available subtitles
-func (c *Client) GetSubtitles(showID string, season, episode int) ([]Subtitle, error) {
+func (c *Client) GetSubtitles(showID string, season, episode int) (Subtitles, error) {
 	s := strconv.Itoa(season)
 	e := strconv.Itoa(episode)
 	return c.parseSubtitle(showID, s, e)
@@ -188,7 +209,7 @@ func (c *Client) parseShows() (map[string]string, error) {
 	return shows, nil
 }
 
-func (c *Client) parseSubtitle(showID, s, e string) ([]Subtitle, error) {
+func (c *Client) parseSubtitle(showID, s, e string) (Subtitles, error) {
 	resp, err := http.Get(fmt.Sprintf("%vre_episode.php?ep=%s-%sx%s", baseURL, showID, s, e))
 	if err != nil {
 		return nil, err
@@ -235,6 +256,6 @@ func (c *Client) parseSubtitle(showID, s, e string) ([]Subtitle, error) {
 			sub = append(sub, subtitle)
 		}
 	}
-	return sub, nil
+	return Subtitles(sub), nil
 
 }
