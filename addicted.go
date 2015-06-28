@@ -50,7 +50,7 @@ type Subtitle struct {
 // Read subtitle's content
 func (sub *Subtitle) Read(p []byte) (int, error) {
 	if sub.conn == nil {
-		resp, err := sub.client.Get(fmt.Sprintf("%s%s", baseURL, sub.Link[1:]), false)
+		resp, err := sub.client.Get(fmt.Sprintf("%s%s", baseURL, sub.Link[1:]), true)
 		if err != nil {
 			return 0, err
 		}
@@ -129,7 +129,7 @@ func (c *Client) SetCredential(user, password string) {
 // Get wrapper function for http.Get which takes care of session's cookies
 func (c *Client) Get(url string, auth bool) (resp *http.Response, err error) {
 	if auth && !c.isConnected {
-		if c.user != "" && c.passwd != "" {
+		if c.user == "" || c.passwd == "" {
 			return nil, ErrNoCreditial
 		}
 		if err := c.connect(); err != nil {
