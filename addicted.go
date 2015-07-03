@@ -35,6 +35,8 @@ var (
 	ErrEpisodeNotFound = errors.New("Episode not found")
 	//ErrUnexpectedContent returned when addic7ed's website seem to have change
 	ErrUnexpectedContent = errors.New("Unexpected content")
+	// ErrDownloadLimit retuned when download limit by day exceeded
+	ErrDownloadLimit = errors.New("Download count exceeded")
 )
 
 // Subtitle represents a subtitle
@@ -53,6 +55,9 @@ func (sub *Subtitle) Read(p []byte) (int, error) {
 		resp, err := sub.client.Get(fmt.Sprintf("%s%s", baseURL, sub.Link[1:]), true)
 		if err != nil {
 			return 0, err
+		}
+		if resp.Request.URL.Path == "/downloadexceeded.php" {
+			return 0, ErrDownloadLimit
 		}
 		sub.conn = resp.Body
 	}
@@ -129,13 +134,12 @@ func (c *Client) SetCredential(user, password string) {
 // Get wrapper function for http.Get which takes care of session's cookies
 func (c *Client) Get(url string, auth bool) (resp *http.Response, err error) {
 	if auth && !c.isConnected {
-		if c.user == "" || c.passwd == "" {
-			return nil, ErrNoCreditial
+		if c.user != "" && c.passwd != "" {
+			if err := c.connect(); err != nil {
+				return nil, err
+			}
+			c.isConnected = true
 		}
-		if err := c.connect(); err != nil {
-			return nil, err
-		}
-		c.isConnected = true
 	}
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
