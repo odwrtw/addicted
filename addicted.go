@@ -65,10 +65,12 @@ func (sub *Subtitle) Read(p []byte) (int, error) {
 }
 
 // Close close subtitle's connection
-func (sub *Subtitle) Close() {
+func (sub *Subtitle) Close() error {
 	if sub.conn != nil {
-		sub.conn.Close()
+		return sub.conn.Close()
 	}
+
+	return nil
 }
 
 // ByDownloads helper for sorting
