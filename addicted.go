@@ -27,6 +27,7 @@ var (
 	xpathDownloadCountFromLanguage = xmlpath.MustCompile("../following-sibling::tr[1]/td[1]")
 	xpathCheckSubtilePage          = xmlpath.MustCompile("//div[@id=\"container\"]")
 	xpathCheckLogged               = xmlpath.MustCompile("//a[@href=\"/logout.php\"]")
+	releaseRe                      = regexp.MustCompile("Version ([-\\(\\)\\.\\w]+),")
 	//ErrNoCreditial returned when attempt to login without creditial set
 	ErrNoCreditial = errors.New("No creditial provided")
 	//ErrInvalidCredential returned when login failed
@@ -236,7 +237,12 @@ func (c *Client) parseSubtitle(showID, s, e string) (Subtitles, error) {
 	sub := []Subtitle{}
 	iter := xpathRelease.Iter(root)
 	for iter.Next() {
-		release := iter.Node().String()
+		releaseStr := iter.Node().String()
+		releaseM := releaseRe.FindStringSubmatch(releaseStr)
+		release := ""
+		if len(releaseM) > 1 {
+			release = releaseM[1]
+		}
 		iterlang := xpathLanguageFromRelease.Iter(iter.Node())
 		for iterlang.Next() {
 			download, ok := xpathDownloadFromLanguage.String(iterlang.Node())
