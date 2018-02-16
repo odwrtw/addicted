@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/jpillora/scraper/scraper"
+
 	"golang.org/x/net/publicsuffix"
 
 	"gopkg.in/xmlpath.v2"
@@ -19,8 +21,6 @@ import (
 var (
 	baseURL                        = "http://www.addic7ed.com/"
 	reDownloadCount                = regexp.MustCompile("(\\d+) Downloads")
-	xpathTvShowIDFromTitle         = xmlpath.MustCompile("./@value")
-	xpathTvShowTitle               = xmlpath.MustCompile("//*[@id=\"qsShow\"]/option")
 	xpathRelease                   = xmlpath.MustCompile("//div[@id=\"container95m\"]//td[@class=\"NewsTitle\"]")
 	xpathLanguageFromRelease       = xmlpath.MustCompile("../..//td[@class=\"language\"]")
 	xpathDownloadFromLanguage      = xmlpath.MustCompile("..//a[@class=\"buttonDownload\"]/@href")
@@ -102,19 +102,18 @@ type Client struct {
 	shows       map[string]string
 	httpClient  *http.Client
 	isConnected bool
+	showScraper *scraper.Endpoint
 }
 
 // NewWithAuth returns new addicted's client with autentification
 func NewWithAuth(user, passwd string) (*Client, error) {
-	options := cookiejar.Options{
-		PublicSuffixList: publicsuffix.List,
-	}
-	jar, err := cookiejar.New(&options)
+	c, err := New()
 	if err != nil {
 		return nil, err
 	}
-	httpClient := http.Client{Jar: jar}
-	return &Client{user, passwd, nil, &httpClient, false}, nil
+	c.user = user
+	c.passwd = passwd
+	return c, nil
 }
 
 // New returns new addicted's client
@@ -127,7 +126,25 @@ func New() (*Client, error) {
 		return nil, err
 	}
 	httpClient := http.Client{Jar: jar}
-	return &Client{httpClient: &httpClient}, nil
+
+	e := &scraper.Endpoint{
+		Name:   "showScraper",
+		Method: "GET",
+		List:   "select > option",
+		URL:    baseURL + "ajax_getShows.php",
+		Headers: map[string]string{
+			"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_12_4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/57.0.2988.133 Safari/537.36",
+		},
+		Result: map[string]scraper.Extractors{
+			"id":   {scraper.MustExtractor("@value")},
+			"name": {scraper.MustExtractor("/(.*)/")},
+		},
+		Debug: false,
+	}
+	return &Client{
+		httpClient:  &httpClient,
+		showScraper: e,
+	}, nil
 }
 
 // SetCredential set user password for addicted client
@@ -179,9 +196,14 @@ func (c *Client) connect() error {
 func (c *Client) GetTvShows() (map[string]string, error) {
 	if len(c.shows) == 0 {
 		var err error
-		c.shows, err = c.parseShows()
+		// Parse the page
+		res, err := c.showScraper.Execute(nil)
 		if err != nil {
 			return nil, err
+		}
+		c.shows = map[string]string{}
+		for _, r := range res {
+			c.shows[r["name"]] = r["id"]
 		}
 	}
 	return c.shows, nil
@@ -192,31 +214,6 @@ func (c *Client) GetSubtitles(showID string, season, episode int) (Subtitles, er
 	s := strconv.Itoa(season)
 	e := strconv.Itoa(episode)
 	return c.parseSubtitle(showID, s, e)
-}
-
-func (c *Client) parseShows() (map[string]string, error) {
-	resp, err := http.Get(baseURL)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	root, err := xmlpath.ParseHTML(resp.Body)
-	if err != nil {
-		return nil, ErrUnexpectedContent
-	}
-
-	shows := map[string]string{}
-	iter := xpathTvShowTitle.Iter(root)
-	for iter.Next() {
-		title := iter.Node().String()
-		id, ok := xpathTvShowIDFromTitle.String(iter.Node())
-		if !ok {
-			return nil, ErrUnexpectedContent
-		}
-		shows[title] = id
-	}
-	return shows, nil
 }
 
 func (c *Client) parseSubtitle(showID, s, e string) (Subtitles, error) {
