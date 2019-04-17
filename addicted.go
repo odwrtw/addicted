@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jpillora/scraper/scraper"
 
@@ -217,7 +218,10 @@ func (c *Client) GetSubtitles(showID string, season, episode int) (Subtitles, er
 }
 
 func (c *Client) parseSubtitle(showID, s, e string) (Subtitles, error) {
-	resp, err := http.Get(fmt.Sprintf("%vre_episode.php?ep=%s-%sx%s", baseURL, showID, s, e))
+	var httpClient = &http.Client{
+		Timeout: time.Second * 10,
+	}
+	resp, err := httpClient.Get(fmt.Sprintf("%vre_episode.php?ep=%s-%sx%s", baseURL, showID, s, e))
 	if err != nil {
 		return nil, err
 	}
