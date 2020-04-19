@@ -20,24 +20,24 @@ import (
 
 var (
 	baseURL                        = "http://www.addic7ed.com/"
-	reDownloadCount                = regexp.MustCompile("(\\d+) Downloads")
+	reDownloadCount                = regexp.MustCompile(`(\d+) Downloads`)
 	xpathRelease                   = xmlpath.MustCompile("//div[@id=\"container95m\"]//td[@class=\"NewsTitle\"]")
 	xpathLanguageFromRelease       = xmlpath.MustCompile("../..//td[@class=\"language\"]")
 	xpathDownloadFromLanguage      = xmlpath.MustCompile("..//a[@class=\"buttonDownload\"]/@href")
 	xpathDownloadCountFromLanguage = xmlpath.MustCompile("../following-sibling::tr[1]/td[1]")
 	xpathCheckSubtilePage          = xmlpath.MustCompile("//div[@id=\"container\"]")
 	xpathCheckLogged               = xmlpath.MustCompile("//a[@href=\"/logout.php\"]")
-	releaseRe                      = regexp.MustCompile("Version ([-\\(\\)\\.\\w]+),")
+	releaseRe                      = regexp.MustCompile(`Version ([-\(\)\.\w]+),`)
 	//ErrNoCreditial returned when attempt to login without creditial set
-	ErrNoCreditial = errors.New("No creditial provided")
+	ErrNoCreditial = errors.New("no creditial provided")
 	//ErrInvalidCredential returned when login failed
-	ErrInvalidCredential = errors.New("Invalid creditial")
+	ErrInvalidCredential = errors.New("invalid creditial")
 	//ErrEpisodeNotFound returned when try to find subtitles for an unknow episode or season or show
-	ErrEpisodeNotFound = errors.New("Episode not found")
+	ErrEpisodeNotFound = errors.New("episode not found")
 	//ErrUnexpectedContent returned when addic7ed's website seem to have change
-	ErrUnexpectedContent = errors.New("Unexpected content")
+	ErrUnexpectedContent = errors.New("unexpected content")
 	// ErrDownloadLimit retuned when download limit by day exceeded
-	ErrDownloadLimit = errors.New("Download count exceeded")
+	ErrDownloadLimit = errors.New("download count exceeded")
 )
 
 // Subtitle represents a subtitle
@@ -131,7 +131,7 @@ func New() (*Client, error) {
 		Name:   "showScraper",
 		Method: "GET",
 		List:   "select > option",
-		URL:    baseURL + "ajax_getShows.php",
+		URL:    baseURL,
 		Headers: map[string]string{
 			"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_12_4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/57.0.2988.133 Safari/537.36",
 		},
@@ -194,17 +194,18 @@ func (c *Client) connect() error {
 
 // GetTvShows returns a map of show's title as keys and ids as values
 func (c *Client) GetTvShows() (map[string]string, error) {
-	if len(c.shows) == 0 {
-		var err error
-		// Parse the page
-		res, err := c.showScraper.Execute(nil)
-		if err != nil {
-			return nil, err
-		}
-		c.shows = map[string]string{}
-		for _, r := range res {
-			c.shows[r["name"]] = r["id"]
-		}
+	if len(c.shows) > 0 {
+		return c.shows, nil
+	}
+	var err error
+	// Parse the page
+	res, err := c.showScraper.Execute(nil)
+	if err != nil {
+		return nil, err
+	}
+	c.shows = map[string]string{}
+	for _, r := range res {
+		c.shows[r["name"]] = r["id"]
 	}
 	return c.shows, nil
 }
