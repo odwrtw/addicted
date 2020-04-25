@@ -14,31 +14,37 @@ Usage
             "fmt"
             "io/ioutil"
 
-            "gitlab.quimbo.fr/nicolas/addicted"
+            "github.com/odwrtw/addicted"
     )
 
     func main() {
             user := "username"
             passwd := "yourpassword"
 
-            addic, err := addicted.New(user, passwd)
+            // Create a client
+            addic, err := addicted.NewWithAuth(user, passwd)
+            // Or
+            // addic, err := addicted.New()
 
-            // t, err := addic.GetTvShows()
+            // Get the list of shows ( addicted has its own system of IDs )
+            // shows, err := addic.GetTvShows()
             // if err != nil {
-            // 	fmt.Println(err)
+            //     fmt.Println(err)
             // }
 
-            // fmt.Println(t)
-
-            sub, err := addic.GetSubtitles("3103", 1, 1)
+            // Get the susbtitles ( House of cards S01E01 )
+            subs, err := addic.GetSubtitles("3103", 1, 1)
             if err != nil {
-                    fmt.Println(err)
+                fmt.Println(err)
             }
-            for i, s := range sub {
-                    if s.Language == "French" {
-                            fmt.Println(i)
-                    }
+
+            // Filter the results on the lang
+            subs = subs.FilterByLang("french")
+
+            // Download it
+            subtitle, err := ioutil.ReadAll(&subs[0])
+            if err != nil {
+                panic(err)
             }
-            subtitle, _ := ioutil.ReadAll(&sub[7])
             ioutil.WriteFile("test.srt", subtitle, 0644)
     }
