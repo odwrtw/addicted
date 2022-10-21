@@ -1,6 +1,6 @@
 module github.com/odwrtw/addicted
 
-go 1.14
+go 1.19
 
 require (
 	github.com/jpillora/scraper v0.0.0-20190930150335-f06f890eb841
