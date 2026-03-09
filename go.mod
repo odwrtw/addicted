@@ -1,15 +1,11 @@
 module github.com/odwrtw/addicted
 
-go 1.21.3
+go 1.26.0
 
 require (
-	github.com/jpillora/scraper v0.2.4
-	golang.org/x/net v0.17.0
-	gopkg.in/xmlpath.v2 v2.0.0-20150820204837-860cbeca3ebc
+	github.com/PuerkitoBio/goquery v1.11.0
+	github.com/jpillora/scraper v0.3.0
+	golang.org/x/net v0.51.0
 )
 
-require (
-	github.com/PuerkitoBio/goquery v1.6.1 // indirect
-	github.com/andybalholm/cascadia v1.1.0 // indirect
-	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect
-)
+require github.com/andybalholm/cascadia v1.3.3 // indirect
