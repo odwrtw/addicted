@@ -11,23 +11,17 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/PuerkitoBio/goquery"
 	"github.com/jpillora/scraper/scraper"
 
 	"golang.org/x/net/publicsuffix"
-
-	"gopkg.in/xmlpath.v2"
 )
 
 var (
-	baseURL                        = "http://www.addic7ed.com/"
-	reDownloadCount                = regexp.MustCompile(`(\d+) Downloads`)
-	xpathRelease                   = xmlpath.MustCompile("//div[@id=\"container95m\"]//td[@class=\"NewsTitle\"]")
-	xpathLanguageFromRelease       = xmlpath.MustCompile("../..//td[@class=\"language\"]")
-	xpathDownloadFromLanguage      = xmlpath.MustCompile("..//a[@class=\"buttonDownload\"]/@href")
-	xpathDownloadCountFromLanguage = xmlpath.MustCompile("../following-sibling::tr[1]/td[1]")
-	xpathCheckSubtilePage          = xmlpath.MustCompile("//div[@id=\"container\"]")
-	xpathCheckLogged               = xmlpath.MustCompile("//a[@href=\"/logout.php\"]")
-	releaseRe                      = regexp.MustCompile(`Version ([-\(\)\.\w]+),`)
+	baseURL         = "https://www.addic7ed.com/"
+	reDownloadCount = regexp.MustCompile(`(\d+) Downloads`)
+	releaseRe       = regexp.MustCompile(`Version ([-\(\)\.\w]+),`)
+
 	//ErrNoCreditial returned when attempt to login without creditial set
 	ErrNoCreditial = errors.New("no creditial provided")
 	//ErrInvalidCredential returned when login failed
@@ -46,8 +40,8 @@ type Subtitle struct {
 	Release  string
 	Download int
 	Link     string
-	conn     io.ReadCloser
-	client   *Client
+	conn io.ReadCloser
+	client *Client
 }
 
 // Read subtitle's content
@@ -133,7 +127,7 @@ func New() (*Client, error) {
 		List:   "select > option",
 		URL:    baseURL,
 		Headers: map[string]string{
-			"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_12_4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/57.0.2988.133 Safari/537.36",
+			"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
 		},
 		Result: map[string]scraper.Extractors{
 			"id":   {scraper.MustExtractor("@value")},
@@ -168,7 +162,7 @@ func (c *Client) Get(url string, auth bool) (resp *http.Response, err error) {
 		return nil, err
 	}
 	req.Header.Add("Referer", baseURL)
-	req.Header.Add("User-Agent", "Mozilla/5.0 (Windows; U; Windows NT 6.1; fr; rv:1.9.0.6) Gecko/2009011913 Firefox/3.0.6")
+	req.Header.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 	return c.httpClient.Do(req)
 }
 
@@ -182,11 +176,12 @@ func (c *Client) connect() error {
 	if err != nil {
 		return err
 	}
-	root, err := xmlpath.ParseHTML(resp.Body)
+	defer resp.Body.Close()
+	doc, err := goquery.NewDocumentFromReader(resp.Body)
 	if err != nil {
 		return ErrUnexpectedContent
 	}
-	if !xpathCheckLogged.Exists(root) {
+	if doc.Find(`a[href="/logout.php"]`).Length() == 0 {
 		return ErrInvalidCredential
 	}
 	return nil
@@ -218,57 +213,58 @@ func (c *Client) GetSubtitles(showID string, season, episode int) (Subtitles, er
 }
 
 func (c *Client) parseSubtitle(showID, s, e string) (Subtitles, error) {
-	resp, err := http.Get(fmt.Sprintf("%vre_episode.php?ep=%s-%sx%s", baseURL, showID, s, e))
+	resp, err := c.Get(fmt.Sprintf("%sre_episode.php?ep=%s-%sx%s", baseURL, showID, s, e), false)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
+	return c.parseSubtitleFromReader(resp.Body)
+}
 
-	root, err := xmlpath.ParseHTML(resp.Body)
+func (c *Client) parseSubtitleFromReader(r io.Reader) (Subtitles, error) {
+	doc, err := goquery.NewDocumentFromReader(r)
 	if err != nil {
 		return nil, ErrUnexpectedContent
 	}
-	if !xpathCheckSubtilePage.Exists(root) {
+	if doc.Find("#container").Length() == 0 {
 		return nil, ErrEpisodeNotFound
 	}
 
-	sub := []Subtitle{}
-	iter := xpathRelease.Iter(root)
-	for iter.Next() {
-		releaseStr := iter.Node().String()
+	var subs []Subtitle
+	doc.Find("#container95m").Each(func(_ int, releaseDiv *goquery.Selection) {
+		releaseStr := releaseDiv.Find("td.NewsTitle").First().Text()
 		releaseM := releaseRe.FindStringSubmatch(releaseStr)
 		release := ""
 		if len(releaseM) > 1 {
 			release = releaseM[1]
 		}
-		iterlang := xpathLanguageFromRelease.Iter(iter.Node())
-		for iterlang.Next() {
-			download, ok := xpathDownloadFromLanguage.String(iterlang.Node())
-			if !ok {
-				return nil, ErrUnexpectedContent
+
+		releaseDiv.Find("td.language").Each(func(_ int, langTd *goquery.Selection) {
+			row := langTd.Parent()
+			link, exists := row.Find(`a[href*="/updated/"]`).Attr("href")
+			if !exists {
+				return // skip incomplete/untranslated
 			}
-			downloadText, ok := xpathDownloadCountFromLanguage.String(iterlang.Node())
-			if !ok {
-				return nil, ErrUnexpectedContent
+
+			countText := row.Next().Find("td").First().Text()
+			matches := reDownloadCount.FindStringSubmatch(countText)
+			if len(matches) < 2 {
+				return
 			}
-			refound := reDownloadCount.FindAllStringSubmatch(downloadText, 1)
-			if len(refound) == 0 || len(refound[0]) == 0 {
-				return nil, ErrUnexpectedContent
-			}
-			downloadcount, err := strconv.Atoi(refound[0][1])
+			downloadCount, err := strconv.Atoi(matches[1])
 			if err != nil {
-				return nil, ErrUnexpectedContent
+				return
 			}
-			subtitle := Subtitle{
-				Language: strings.ToLower(strings.TrimSpace(iterlang.Node().String())),
-				Download: downloadcount,
-				Link:     download,
+
+			lang := strings.ToLower(strings.TrimSpace(langTd.Text()))
+			subs = append(subs, Subtitle{
+				Language: lang,
+				Download: downloadCount,
+				Link:     link,
 				Release:  release,
 				client:   c,
-			}
-			sub = append(sub, subtitle)
-		}
-	}
-	return Subtitles(sub), nil
-
+			})
+		})
+	})
+	return Subtitles(subs), nil
 }
