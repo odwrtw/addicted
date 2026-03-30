@@ -12,20 +12,21 @@ import (
 	"strings"
 
 	"github.com/PuerkitoBio/goquery"
-	"github.com/jpillora/scraper/scraper"
 
 	"golang.org/x/net/publicsuffix"
 )
+
+const userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
 var (
 	baseURL         = "https://www.addic7ed.com/"
 	reDownloadCount = regexp.MustCompile(`(\d+) Downloads`)
 	releaseRe       = regexp.MustCompile(`Version ([-\(\)\.\w]+),`)
 
-	//ErrNoCreditial returned when attempt to login without creditial set
-	ErrNoCreditial = errors.New("no creditial provided")
-	//ErrInvalidCredential returned when login failed
-	ErrInvalidCredential = errors.New("invalid creditial")
+	// ErrNoCredential returned when attempt to login without credential set
+	ErrNoCredential = errors.New("no credential provided")
+	// ErrInvalidCredential returned when login failed
+	ErrInvalidCredential = errors.New("invalid credential")
 	//ErrEpisodeNotFound returned when try to find subtitles for an unknow episode or season or show
 	ErrEpisodeNotFound = errors.New("episode not found")
 	//ErrUnexpectedContent returned when addic7ed's website seem to have change
@@ -96,10 +97,9 @@ type Client struct {
 	shows       map[string]string
 	httpClient  *http.Client
 	isConnected bool
-	showScraper *scraper.Endpoint
 }
 
-// NewWithAuth returns new addicted's client with autentification
+// NewWithAuth returns new addicted's client with authentication
 func NewWithAuth(user, passwd string) (*Client, error) {
 	c, err := New()
 	if err != nil {
@@ -120,24 +120,8 @@ func New() (*Client, error) {
 		return nil, err
 	}
 	httpClient := http.Client{Jar: jar}
-
-	e := &scraper.Endpoint{
-		Name:   "showScraper",
-		Method: "GET",
-		List:   "select > option",
-		URL:    baseURL,
-		Headers: map[string]string{
-			"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-		},
-		Result: map[string]scraper.Extractors{
-			"id":   {scraper.MustExtractor("@value")},
-			"name": {scraper.MustExtractor("/(.*)/")},
-		},
-		Debug: false,
-	}
 	return &Client{
-		httpClient:  &httpClient,
-		showScraper: e,
+		httpClient: &httpClient,
 	}, nil
 }
 
@@ -162,7 +146,7 @@ func (c *Client) Get(url string, auth bool) (resp *http.Response, err error) {
 		return nil, err
 	}
 	req.Header.Add("Referer", baseURL)
-	req.Header.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+	req.Header.Add("User-Agent", userAgent)
 	return c.httpClient.Do(req)
 }
 
@@ -192,16 +176,23 @@ func (c *Client) GetTvShows() (map[string]string, error) {
 	if len(c.shows) > 0 {
 		return c.shows, nil
 	}
-	var err error
-	// Parse the page
-	res, err := c.showScraper.Execute(nil)
+	resp, err := c.Get(baseURL, false)
 	if err != nil {
 		return nil, err
 	}
-	c.shows = map[string]string{}
-	for _, r := range res {
-		c.shows[r["name"]] = r["id"]
+	defer resp.Body.Close()
+	doc, err := goquery.NewDocumentFromReader(resp.Body)
+	if err != nil {
+		return nil, ErrUnexpectedContent
 	}
+	c.shows = map[string]string{}
+	doc.Find("select > option").Each(func(_ int, s *goquery.Selection) {
+		id, _ := s.Attr("value")
+		name := strings.TrimSpace(s.Text())
+		if id != "" && name != "" {
+			c.shows[name] = id
+		}
+	})
 	return c.shows, nil
 }
 
