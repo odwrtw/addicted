@@ -11,40 +11,46 @@ Usage
     package main
 
     import (
-            "fmt"
-            "io/ioutil"
+            "context"
+            "io"
+            "os"
 
             "github.com/odwrtw/addicted"
     )
 
     func main() {
-            user := "username"
-            passwd := "yourpassword"
+            ctx := context.Background()
 
             // Create a client
-            addic, err := addicted.NewWithAuth(user, passwd)
-            // Or
-            // addic, err := addicted.New()
-
-            // Get the list of shows ( addicted has its own system of IDs )
-            // shows, err := addic.GetTvShows()
-            // if err != nil {
-            //     fmt.Println(err)
-            // }
-
-            // Get the susbtitles ( House of cards S01E01 )
-            subs, err := addic.GetSubtitles("3103", 1, 1)
-            if err != nil {
-                fmt.Println(err)
-            }
-
-            // Filter the results on the lang
-            subs = subs.FilterByLang("french")
-
-            // Download it
-            subtitle, err := ioutil.ReadAll(&subs[0])
+            client, err := addicted.NewWithAuth("username", "yourpassword")
             if err != nil {
                 panic(err)
             }
-            ioutil.WriteFile("test.srt", subtitle, 0644)
+
+            // Get subtitles for a show by name (House of Cards S01E01)
+            subs, err := client.GetSubtitles(ctx, "House of Cards", 1, 1)
+            if err != nil {
+                panic(err)
+            }
+
+            // Filter by language
+            subs = subs.FilterByLang("french")
+            if len(subs) == 0 {
+                panic("no subtitles found")
+            }
+
+            // Download the subtitle content
+            rc, err := client.Download(ctx, subs[0])
+            if err != nil {
+                panic(err)
+            }
+            defer rc.Close()
+
+            f, err := os.Create("subtitle.srt")
+            if err != nil {
+                panic(err)
+            }
+            defer f.Close()
+
+            io.Copy(f, rc)
     }

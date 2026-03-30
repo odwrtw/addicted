@@ -1,6 +1,7 @@
 package addicted
 
 import (
+	"context"
 	"crypto/md5"
 	"errors"
 	"fmt"
@@ -17,17 +18,19 @@ import (
 	"golang.org/x/net/publicsuffix"
 )
 
-const userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+const (
+	userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+	baseURL   = "https://www.addic7ed.com/"
+)
 
 var (
-	baseURL         = "https://www.addic7ed.com/"
 	reDownloadCount = regexp.MustCompile(`(\d+) Downloads`)
 
 	// ErrShowNotFound returned when the show name is not in the show list
 	ErrShowNotFound = errors.New("show not found")
-	//ErrEpisodeNotFound returned when try to find subtitles for an unknown episode or season or show
+	// ErrEpisodeNotFound returned when try to find subtitles for an unknown episode or season or show
 	ErrEpisodeNotFound = errors.New("episode not found")
-	//ErrUnexpectedContent returned when addic7ed's website seem to have changed
+	// ErrUnexpectedContent returned when addic7ed's website seem to have changed
 	ErrUnexpectedContent = errors.New("unexpected content")
 	// ErrDownloadLimit returned when download limit by day exceeded
 	ErrDownloadLimit = errors.New("download count exceeded")
@@ -41,33 +44,6 @@ type Subtitle struct {
 	Download        int
 	Link            string
 	HearingImpaired bool
-	conn            io.ReadCloser
-	client          *Client
-}
-
-// Read subtitle's content
-func (sub *Subtitle) Read(p []byte) (int, error) {
-	if sub.conn == nil {
-		resp, err := sub.client.Get(fmt.Sprintf("%s%s", baseURL, sub.Link[1:]), true)
-		if err != nil {
-			return 0, err
-		}
-		if strings.HasPrefix(resp.Header.Get("Content-Type"), "text/html") {
-			resp.Body.Close()
-			return 0, ErrDownloadLimit
-		}
-		sub.conn = resp.Body
-	}
-	return sub.conn.Read(p)
-}
-
-// Close close subtitle's connection
-func (sub *Subtitle) Close() error {
-	if sub.conn != nil {
-		return sub.conn.Close()
-	}
-
-	return nil
 }
 
 // ByDownloads helper for sorting
@@ -133,22 +109,45 @@ func (c *Client) SetCredential(user, password string) {
 	})
 }
 
-// Get performs a GET request. Credentials are sent automatically via cookies.
-// The auth parameter is kept for API compatibility but is a no-op.
-func (c *Client) Get(urlStr string, _ bool) (resp *http.Response, err error) {
-	req, err := http.NewRequest("GET", urlStr, nil)
+func (c *Client) get(ctx context.Context, urlStr string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", urlStr, nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Referer", baseURL)
 	req.Header.Set("User-Agent", userAgent)
 	req.Header.Set("Accept-Language", "en-US,en;q=1.0")
-	return c.httpClient.Do(req)
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		return nil, fmt.Errorf("unexpected status %d", resp.StatusCode)
+	}
+	return resp, nil
 }
 
-// GetTvShows returns a map of show's title as keys and ids as values
-func (c *Client) GetTvShows() (map[string]string, error) {
-	resp, err := c.Get(baseURL, false)
+// Download fetches the subtitle content. The caller is responsible for closing the returned ReadCloser.
+func (c *Client) Download(ctx context.Context, sub Subtitle) (io.ReadCloser, error) {
+	resp, err := c.get(ctx, fmt.Sprintf("%s%s", baseURL, sub.Link[1:]))
+	if err != nil {
+		return nil, err
+	}
+	if strings.HasPrefix(resp.Header.Get("Content-Type"), "text/html") {
+		resp.Body.Close()
+		return nil, ErrDownloadLimit
+	}
+	return resp.Body, nil
+}
+
+// GetSubtitles returns available subtitles for the named show.
+func (c *Client) GetSubtitles(ctx context.Context, showName string, season, episode int) (Subtitles, error) {
+	return c.parseSubtitle(ctx, showName, season, episode)
+}
+
+func (c *Client) getTvShows(ctx context.Context) (map[string]string, error) {
+	resp, err := c.get(ctx, baseURL)
 	if err != nil {
 		return nil, err
 	}
@@ -168,15 +167,9 @@ func (c *Client) GetTvShows() (map[string]string, error) {
 	return shows, nil
 }
 
-// GetShowID returns the numeric ID for the named show (case-insensitive).
-func (c *Client) GetShowID(name string) (string, error) {
-	_, id, err := c.findShow(name)
-	return id, err
-}
-
 // findShow returns the canonical show name and numeric ID for a case-insensitive match.
-func (c *Client) findShow(name string) (canonical, id string, err error) {
-	shows, err := c.GetTvShows()
+func (c *Client) findShow(ctx context.Context, name string) (canonical, id string, err error) {
+	shows, err := c.getTvShows(ctx)
 	if err != nil {
 		return "", "", err
 	}
@@ -189,25 +182,17 @@ func (c *Client) findShow(name string) (canonical, id string, err error) {
 	return "", "", ErrShowNotFound
 }
 
-// GetSubtitles returns available subtitles for the named show.
-func (c *Client) GetSubtitles(showName string, season, episode int) (Subtitles, error) {
-	return c.parseSubtitle(showName, season, episode)
-}
-
-func (c *Client) parseSubtitle(showName string, season, episode int) (Subtitles, error) {
-	// Resolve canonical name and ID (case-insensitive, canonical name used in URL)
-	canonicalName, showID, err := c.findShow(showName)
+func (c *Client) parseSubtitle(ctx context.Context, showName string, season, episode int) (Subtitles, error) {
+	canonicalName, showID, err := c.findShow(ctx, showName)
 	if err != nil {
 		return nil, err
 	}
 
-	// Get episode title for URL construction
-	episodeTitle, err := c.getEpisodeTitle(showID, season, episode)
+	episodeTitle, err := c.getEpisodeTitle(ctx, showID, season, episode)
 	if err != nil {
 		return nil, err
 	}
 
-	// Fetch episode page
 	epURL := fmt.Sprintf("%sserie/%s/%d/%d/%s",
 		baseURL,
 		url.PathEscape(canonicalName),
@@ -215,7 +200,7 @@ func (c *Client) parseSubtitle(showName string, season, episode int) (Subtitles,
 		episode,
 		url.PathEscape(episodeTitle),
 	)
-	resp, err := c.Get(epURL, true)
+	resp, err := c.get(ctx, epURL)
 	if err != nil {
 		return nil, err
 	}
@@ -235,9 +220,9 @@ func (c *Client) parseSubtitle(showName string, season, episode int) (Subtitles,
 	return subs, nil
 }
 
-func (c *Client) getEpisodeTitle(showID string, season, episode int) (string, error) {
+func (c *Client) getEpisodeTitle(ctx context.Context, showID string, season, episode int) (string, error) {
 	u := fmt.Sprintf("%sajax_getEpisodes.php?showID=%s&season=%d", baseURL, showID, season)
-	resp, err := c.Get(u, true)
+	resp, err := c.get(ctx, u)
 	if err != nil {
 		return "", err
 	}
@@ -277,7 +262,6 @@ func (c *Client) parseSubtitleFromReader(r io.Reader) (Subtitles, error) {
 
 	var subs []Subtitle
 	doc.Find("#container95m").Each(func(_ int, container *goquery.Selection) {
-		// Release name from "Version X, Duration: Y"
 		titleText := strings.TrimSpace(container.Find("td.NewsTitle").First().Text())
 		release, _, _ := strings.Cut(strings.TrimPrefix(titleText, "Version "), ", Duration:")
 		release = strings.TrimSpace(release)
@@ -317,7 +301,6 @@ func (c *Client) parseSubtitleFromReader(r io.Reader) (Subtitles, error) {
 				Download:        downloads,
 				Link:            link,
 				HearingImpaired: hi,
-				client:          c,
 			})
 		})
 	})
