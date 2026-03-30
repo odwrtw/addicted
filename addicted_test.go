@@ -2,6 +2,7 @@ package addicted
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"os"
 	"sort"
@@ -93,7 +94,7 @@ func TestIntegration(t *testing.T) {
 	season := 1
 	episode := 1
 
-	subs, err := c.GetSubtitles(showName, season, episode)
+	subs, err := c.GetSubtitles(context.Background(), showName, season, episode)
 	if err != nil {
 		t.Fatalf("GetSubtitles: %v", err)
 	}
@@ -113,9 +114,14 @@ func TestIntegration(t *testing.T) {
 	sort.Sort(sort.Reverse(ByDownloads(english)))
 	best := english[0]
 	t.Logf("downloading most popular english subtitle: release=%q downloads=%d", best.Release, best.Download)
-	defer best.Close()
 
-	scanner := bufio.NewScanner(&best)
+	rc, err := c.Download(context.Background(), best)
+	if err != nil {
+		t.Fatalf("Download: %v", err)
+	}
+	defer rc.Close()
+
+	scanner := bufio.NewScanner(rc)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		// SRT format: skip blank lines, sequence numbers, and timestamp lines
